@@ -1,0 +1,2 @@
+[console_scripts]
+signal-daemon = signal_daemon.cli:cli
