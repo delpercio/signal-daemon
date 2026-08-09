@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from signal_agent.schema import EventType, Provider, SignalEvent
+from signal_daemon.schema import EventType, Provider, SignalEvent
 
 logger = logging.getLogger(__name__)
 

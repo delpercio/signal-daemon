@@ -8,15 +8,15 @@ import sys
 import threading
 import time
 
-from signal_agent.adapters.antigravity import AntigravityAdapter
-from signal_agent.adapters.claude_code import (
+from signal_daemon.adapters.antigravity import AntigravityAdapter
+from signal_daemon.adapters.claude_code import (
     ClaudeCodeConversationHandler,
     ClaudeCodeTaskHandler,
 )
-from signal_agent.adapters.codex import CodexAdapter
-from signal_agent.config import SignalConfig
-from signal_agent.queue import DeliveryQueue, QueueSender
-from signal_agent.schema import SignalEvent
+from signal_daemon.adapters.codex import CodexAdapter
+from signal_daemon.config import SignalConfig
+from signal_daemon.queue import DeliveryQueue, QueueSender
+from signal_daemon.schema import SignalEvent
 
 logger = logging.getLogger(__name__)
 

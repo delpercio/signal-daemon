@@ -15,7 +15,7 @@ from pathlib import Path
 
 import sqlite_utils
 
-from signal_agent.schema import SignalEvent, SignalEventBatch
+from signal_daemon.schema import SignalEvent, SignalEventBatch
 
 logger = logging.getLogger(__name__)
 

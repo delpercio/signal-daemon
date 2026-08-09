@@ -1,7 +1,7 @@
 [project]
-name = "signal-agent"
+name = "signal-daemon"
 version = "0.1.0"
-description = "Mac capture agent that streams AI development activity into Anton"
+description = "Mac capture daemon that streams AI development activity into Anton"
 requires-python = ">=3.11"
 dependencies = [
     "watchdog>=4.0.0",
@@ -13,14 +13,14 @@ dependencies = [
 ]
 
 [project.scripts]
-signal-agent = "signal_agent.cli:cli"
+signal-daemon = "signal_daemon.cli:cli"
 
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["signal_agent*"]
+include = ["signal_daemon*"]
 
 [project.optional-dependencies]
 dev = [

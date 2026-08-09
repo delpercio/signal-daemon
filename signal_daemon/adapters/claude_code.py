@@ -17,7 +17,7 @@ from typing import Callable
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from signal_agent.schema import EventType, Provider, SignalEvent
+from signal_daemon.schema import EventType, Provider, SignalEvent
 
 logger = logging.getLogger(__name__)
 

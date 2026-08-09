@@ -4,12 +4,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.delpercio.signal-agent</string>
+  <string>com.delpercio.signal-daemon</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/env</string>
-    <string>signal-agent</string>
+    <string>signal-daemon</string>
     <string>start</string>
   </array>
 
@@ -26,10 +26,10 @@
   <integer>10</integer>
 
   <key>StandardOutPath</key>
-  <string>/tmp/signal-agent.stdout.log</string>
+  <string>/tmp/signal-daemon.stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/tmp/signal-agent.stderr.log</string>
+  <string>/tmp/signal-daemon.stderr.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>

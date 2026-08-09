@@ -1,4 +1,4 @@
-"""Signal agent CLI."""
+"""Signal daemon CLI."""
 
 from __future__ import annotations
 
@@ -8,21 +8,21 @@ from datetime import datetime, timezone
 
 import click
 
-from signal_agent.config import SignalConfig
-from signal_agent.queue import DeliveryQueue, QueueSender
-from signal_agent.schema import EventType, Provider, SignalEvent
+from signal_daemon.config import SignalConfig
+from signal_daemon.queue import DeliveryQueue, QueueSender
+from signal_daemon.schema import EventType, Provider, SignalEvent
 
 
 @click.group()
 def cli():
-    """Signal — AI development activity capture agent."""
+    """Signal — AI development activity capture daemon."""
     pass
 
 
 @cli.command()
 def start():
     """Start the Signal capture daemon."""
-    from signal_agent.daemon import SignalDaemon
+    from signal_daemon.daemon import SignalDaemon
 
     config = SignalConfig()
     if not config.api_key:
@@ -32,7 +32,7 @@ def start():
             err=True,
         )
         click.echo(
-            "   Set it in ~/.signal-agent/.env or as an environment variable.",
+            "   Set it in ~/.signal-daemon/.env or as an environment variable.",
             err=True,
         )
 
@@ -50,7 +50,7 @@ def status():
     queue = DeliveryQueue(db_path=config.queue_db_path)
     stats = queue.stats()
 
-    click.echo("Signal Agent Status")
+    click.echo("Signal Daemon Status")
     click.echo("=" * 40)
     click.echo(f"Device ID:       {config.device_id}")
     click.echo(f"Anton URL:       {config.anton_url}")
@@ -121,7 +121,7 @@ def test():
         timestamp=datetime.now(timezone.utc),
         payload={
             "test": True,
-            "message": "Signal agent connectivity test",
+            "message": "Signal daemon connectivity test",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -131,7 +131,7 @@ def test():
 
     import httpx
 
-    from signal_agent.schema import SignalEventBatch
+    from signal_daemon.schema import SignalEventBatch
 
     batch = SignalEventBatch(events=[event])
     try:
@@ -161,12 +161,12 @@ def scan():
     config = SignalConfig()
     config.ensure_dirs()
 
-    from signal_agent.adapters.antigravity import AntigravityAdapter
-    from signal_agent.adapters.claude_code import (
+    from signal_daemon.adapters.antigravity import AntigravityAdapter
+    from signal_daemon.adapters.claude_code import (
         ClaudeCodeConversationHandler,
         ClaudeCodeTaskHandler,
     )
-    from signal_agent.adapters.codex import CodexAdapter
+    from signal_daemon.adapters.codex import CodexAdapter
 
     collected: list[SignalEvent] = []
 

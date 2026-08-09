@@ -1,4 +1,4 @@
-"""Signal agent configuration."""
+"""Signal daemon configuration."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ def _default_device_id() -> str:
 
 
 class SignalConfig(BaseSettings):
-    """Configuration for the Signal capture agent.
+    """Configuration for the Signal capture daemon.
 
     Values are read from environment variables prefixed with SIGNAL_,
-    or from a .env file at ~/.signal-agent/.env.
+    or from a .env file at ~/.signal-daemon/.env.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="SIGNAL_",
-        env_file=str(Path.home() / ".signal-agent" / ".env"),
+        env_file=str(Path.home() / ".signal-daemon" / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
@@ -48,7 +48,7 @@ class SignalConfig(BaseSettings):
 
     # Queue settings
     queue_db_path: Path = Field(
-        default_factory=lambda: Path.home() / ".signal-agent" / "queue.db"
+        default_factory=lambda: Path.home() / ".signal-daemon" / "queue.db"
     )
     queue_max_bytes: int = 500 * 1024 * 1024  # 500MB
     queue_max_age_days: int = 7
@@ -61,12 +61,12 @@ class SignalConfig(BaseSettings):
 
     # State tracking
     state_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".signal-agent" / "state"
+        default_factory=lambda: Path.home() / ".signal-daemon" / "state"
     )
 
     # Logging
     log_file: Path = Field(
-        default_factory=lambda: Path.home() / ".signal-agent" / "signal-agent.log"
+        default_factory=lambda: Path.home() / ".signal-daemon" / "signal-daemon.log"
     )
     log_level: str = "INFO"
 
