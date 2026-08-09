@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -17,6 +22,114 @@ from signal_daemon.schema import EventType, Provider, SignalEvent
 def cli():
     """Signal — AI development activity capture daemon."""
     pass
+
+
+@cli.command()
+def setup():
+    """Interactive setup wizard to configure the daemon."""
+    click.echo("Signal Daemon Setup")
+    click.echo("===================\n")
+
+    # 1. Config directory
+    config_dir = Path.home() / ".signal-daemon"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env_file = config_dir / ".env"
+
+    # Default device ID
+    default_device = socket.gethostname().split(".")[0].lower().replace(" ", "-")
+
+    # Load existing if any
+    existing_url = "http://192.168.0.9:8080"
+    existing_key = ""
+    existing_device = default_device
+
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("SIGNAL_ANTON_URL="):
+                existing_url = line.split("=", 1)[1].strip()
+            elif line.startswith("SIGNAL_API_KEY="):
+                existing_key = line.split("=", 1)[1].strip()
+            elif line.startswith("SIGNAL_DEVICE_ID="):
+                existing_device = line.split("=", 1)[1].strip()
+
+    # 2. Prompts
+    anton_url = click.prompt("Anton Server URL", default=existing_url)
+    
+    # Hide input for API key, don't show default in prompt string if it exists
+    if existing_key:
+        click.echo("API Key is already configured.")
+        new_key = click.prompt("New API Key (leave empty to keep existing)", default="", hide_input=True, show_default=False)
+        api_key = new_key if new_key else existing_key
+    else:
+        api_key = click.prompt("Signal API Key", hide_input=True)
+
+    device_id = click.prompt("Device ID", default=existing_device)
+
+    # 3. Write .env
+    env_content = f"SIGNAL_ANTON_URL={anton_url}\nSIGNAL_API_KEY={api_key}\nSIGNAL_DEVICE_ID={device_id}\n"
+    env_file.write_text(env_content)
+    click.echo(f"\n✓ Configuration saved to {env_file}")
+
+    # 4. LaunchAgent setup
+    install_agent = click.confirm("\nInstall macOS LaunchAgent to start automatically on login?", default=True)
+    
+    if install_agent:
+        executable = shutil.which("signal-daemon")
+        if not executable:
+            click.echo("⚠ Could not find 'signal-daemon' in PATH. Make sure to install it first (e.g., 'pip install -e .')")
+            return
+
+        plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.delpercio.signal-daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{executable}</string>
+    <string>start</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/signal-daemon.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/signal-daemon.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:{os.path.dirname(executable)}</string>
+  </dict>
+</dict>
+</plist>"""
+
+        launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
+        launch_agents_dir.mkdir(parents=True, exist_ok=True)
+        plist_path = launch_agents_dir / "com.delpercio.signal-daemon.plist"
+        
+        plist_path.write_text(plist_content)
+        click.echo(f"✓ Created LaunchAgent plist at {plist_path}")
+
+        # Unload if it already exists, then load
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+        res = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True)
+        
+        if res.returncode == 0:
+            click.echo("✓ Daemon loaded and started in the background.")
+        else:
+            click.echo(f"⚠ Failed to load daemon: {res.stderr.decode()}")
+    
+    click.echo("\nSetup complete! You can view status with: signal-daemon status")
+
 
 
 @cli.command()
