@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,9 +76,14 @@ class DeliveryQueue:
             )
             logger.debug("Enqueued event %s", event.event_id)
             return True
-        except Exception:
-            # Duplicate event_id — UNIQUE constraint
+        except sqlite3.IntegrityError:
+            # Duplicate event_id — UNIQUE constraint. Expected, not an error.
             logger.debug("Duplicate event %s, skipping", event.event_id)
+            return False
+        except Exception:
+            # A real failure (disk full, corrupt DB). Log loudly rather than
+            # reporting it as a duplicate and silently dropping the event.
+            logger.exception("Failed to enqueue event %s", event.event_id)
             return False
 
     def enqueue_many(self, events: list[SignalEvent]) -> int:
@@ -97,18 +103,46 @@ class DeliveryQueue:
         )
         return rows[0][0] if rows else 0
 
-    def fetch_batch(self, batch_size: int = 50) -> list[dict]:
-        """Fetch the next batch of undelivered events, oldest first."""
-        rows = list(
-            self.db.execute(
-                "SELECT id, event_id, payload_json FROM events "
-                "WHERE delivered = 0 ORDER BY id ASC LIMIT ?",
-                [batch_size],
-            ).fetchall()
-        )
+    def fetch_batch(
+        self, batch_size: int = 50, max_attempts: int = 0
+    ) -> list[dict]:
+        """Fetch the next batch of undelivered events, oldest first.
+
+        With `max_attempts` set, events that have failed that many times are
+        skipped. Without it a permanently-rejected event sits at the head of
+        the queue forever and blocks every event behind it.
+        """
+        if max_attempts > 0:
+            rows = list(
+                self.db.execute(
+                    "SELECT id, event_id, payload_json FROM events "
+                    "WHERE delivered = 0 AND attempts < ? ORDER BY id ASC LIMIT ?",
+                    [max_attempts, batch_size],
+                ).fetchall()
+            )
+        else:
+            rows = list(
+                self.db.execute(
+                    "SELECT id, event_id, payload_json FROM events "
+                    "WHERE delivered = 0 ORDER BY id ASC LIMIT ?",
+                    [batch_size],
+                ).fetchall()
+            )
         return [
             {"id": r[0], "event_id": r[1], "payload_json": r[2]} for r in rows
         ]
+
+    def stuck_count(self, max_attempts: int) -> int:
+        """Number of undelivered events that have exhausted their retries."""
+        if max_attempts <= 0:
+            return 0
+        rows = list(
+            self.db.execute(
+                "SELECT COUNT(*) FROM events WHERE delivered = 0 AND attempts >= ?",
+                [max_attempts],
+            ).fetchall()
+        )
+        return rows[0][0] if rows else 0
 
     def mark_delivered(self, row_ids: list[int]) -> None:
         """Mark events as successfully delivered."""
@@ -208,6 +242,7 @@ class QueueSender:
         batch_size: int = 50,
         retry_base: float = 1.0,
         retry_max: float = 300.0,
+        max_attempts: int = 10,
     ):
         self.queue = queue
         self.ingest_url = f"{anton_url.rstrip('/')}/api/signal/ingest"
@@ -215,7 +250,9 @@ class QueueSender:
         self.batch_size = batch_size
         self.retry_base = retry_base
         self.retry_max = retry_max
+        self.max_attempts = max_attempts
         self._consecutive_failures = 0
+        self._last_sent = 0
 
     def _backoff_delay(self) -> float:
         """Calculate delay with exponential backoff + jitter."""
@@ -231,7 +268,8 @@ class QueueSender:
         """Attempt to send one batch. Returns True if successful or queue empty."""
         import httpx
 
-        batch = self.queue.fetch_batch(self.batch_size)
+        self._last_sent = 0
+        batch = self.queue.fetch_batch(self.batch_size, self.max_attempts)
         if not batch:
             self._consecutive_failures = 0
             return True
@@ -265,6 +303,7 @@ class QueueSender:
             if resp.status_code in (200, 201):
                 self.queue.mark_delivered(row_ids)
                 self._consecutive_failures = 0
+                self._last_sent = len(events)
                 logger.info(
                     "Delivered %d events to Anton (%s)",
                     len(events),
@@ -285,16 +324,16 @@ class QueueSender:
             return False
 
     def drain(self, max_iterations: int = 100) -> int:
-        """Send all pending events. Returns total events sent."""
+        """Send all pending events. Returns the number actually delivered."""
         total_sent = 0
         for _ in range(max_iterations):
-            if self.queue.pending_count() == 0:
+            if not self.queue.fetch_batch(1, self.max_attempts):
                 break
             if self.send_batch():
-                batch = self.queue.fetch_batch(1)
-                if not batch:
+                if self._last_sent == 0:
+                    # Nothing left to send (or the batch was all corrupt).
                     break
-                total_sent += self.batch_size
+                total_sent += self._last_sent
             else:
                 delay = self._backoff_delay()
                 logger.info("Backing off %.1fs before retry", delay)

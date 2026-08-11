@@ -75,37 +75,18 @@ class IngestResponse(BaseModel):
 
 # ---------- Cost estimation helpers ----------
 
-# Approximate per-1K-token costs (USD) as of mid-2026.
-# These are rough estimates for cost tracking, not billing.
-MODEL_COSTS_PER_1K: dict[str, dict[str, float]] = {
-    # Anthropic
-    "claude-opus-4": {"input": 0.015, "output": 0.075},
-    "claude-sonnet-4": {"input": 0.003, "output": 0.015},
-    "claude-haiku-3.5": {"input": 0.0008, "output": 0.004},
-    # Google
-    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01},
-    "gemini-2.5-flash": {"input": 0.00015, "output": 0.0006},
-    "gemini-3.1-pro": {"input": 0.002, "output": 0.012},
-    # OpenAI
-    "gpt-4o": {"input": 0.0025, "output": 0.01},
-    "o3": {"input": 0.01, "output": 0.04},
-    "codex-mini": {"input": 0.0015, "output": 0.006},
-}
-
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate cost in USD for a given model and token counts."""
-    # Try exact match first, then prefix match
-    costs = MODEL_COSTS_PER_1K.get(model)
-    if costs is None:
-        for key, val in MODEL_COSTS_PER_1K.items():
-            if model.startswith(key) or key.startswith(model):
-                costs = val
-                break
-    if costs is None:
-        # Unknown model — use a conservative mid-range estimate
-        costs = {"input": 0.003, "output": 0.015}
+    """Estimate cost in USD for a given model and token counts.
 
-    return (input_tokens / 1000 * costs["input"]) + (
-        output_tokens / 1000 * costs["output"]
+    Thin wrapper kept for callers that only have plain input/output counts.
+    Prefer `signal_daemon.metrics.estimate_cost`, which also prices cache
+    reads and writes — ignoring those overstates a cached session's cost.
+    """
+    from signal_daemon.metrics import TokenUsage
+    from signal_daemon.metrics import estimate_cost as _estimate
+
+    cost, _priced = _estimate(
+        model, TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
     )
+    return cost
