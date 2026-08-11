@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -174,7 +174,28 @@ def status():
     click.echo(f"  Delivered:     {stats['delivered']}")
     click.echo(f"  Total:         {stats['total']}")
     click.echo(f"  DB size:       {stats['db_size_mb']} MB")
+    stuck = queue.stuck_count(10)
+    if stuck:
+        click.echo(f"  Stuck:         {stuck} (retries exhausted, being skipped)")
     click.echo()
+
+    if stats["total"]:
+        from signal_daemon.dashboard import load_metrics
+        from signal_daemon.metrics import summarise
+
+        totals = summarise(load_metrics(config.queue_db_path))["totals"]
+        click.echo("Captured (all time):")
+        click.echo(f"  Sessions:      {totals['sessions']}")
+        click.echo(
+            f"  Tokens:        {totals['total_tokens']:,} "
+            f"({totals['input_tokens']:,} in / {totals['output_tokens']:,} out)"
+        )
+        click.echo(
+            f"  Cache:         {totals['cache_read_tokens']:,} read / "
+            f"{totals['cache_creation_tokens']:,} written"
+        )
+        click.echo(f"  Est. cost:     ${totals['cost_usd']:.4f}")
+        click.echo()
     click.echo("Watch Paths:")
     click.echo(f"  Antigravity:   {config.antigravity_brain_dir}")
     click.echo(f"    exists:      {'✓' if config.antigravity_brain_dir.exists() else '✗'}")
@@ -269,8 +290,18 @@ def test():
 
 
 @cli.command()
-def scan():
-    """Run a one-time scan of all tools and report what would be captured."""
+@click.option(
+    "--enqueue",
+    is_flag=True,
+    help="Queue what is found for delivery instead of only reporting it.",
+)
+def scan(enqueue: bool):
+    """Report what would be captured, without consuming it.
+
+    By default this is a true dry run: capture cursors are written to a
+    throwaway directory so the daemon still picks these events up later.
+    Pass --enqueue to actually capture them.
+    """
     config = SignalConfig()
     config.ensure_dirs()
 
@@ -280,53 +311,125 @@ def scan():
         ClaudeCodeTaskHandler,
     )
     from signal_daemon.adapters.codex import CodexAdapter
+    from signal_daemon.metrics import metrics_from_event, summarise
 
     collected: list[SignalEvent] = []
 
-    click.echo("Scanning Antigravity...")
-    ag = AntigravityAdapter(
-        brain_dir=config.antigravity_brain_dir,
-        device_id=config.device_id,
-        on_events=collected.extend,
-        state_dir=config.state_dir,
-    )
-    ag_events = ag.scan_existing()
-    click.echo(f"  Found {len(ag_events)} events")
+    with tempfile.TemporaryDirectory(prefix="signal-scan-") as scratch:
+        if enqueue:
+            state_dir = config.state_dir
+        else:
+            # Copy existing cursors so the scan starts from the real position
+            # but never advances the daemon's own state.
+            state_dir = Path(scratch)
+            if config.state_dir.exists():
+                shutil.copytree(config.state_dir, state_dir, dirs_exist_ok=True)
 
-    click.echo("Scanning Claude Code conversations...")
-    cc = ClaudeCodeConversationHandler(
-        projects_dir=config.claude_projects_dir,
-        device_id=config.device_id,
-        on_events=collected.extend,
-        state_dir=config.state_dir,
-    )
-    cc_events = cc.scan_existing()
-    click.echo(f"  Found {len(cc_events)} events")
+        def adapter_args(**extra):
+            return dict(
+                device_id=config.device_id,
+                on_events=collected.extend,
+                state_dir=state_dir,
+                **extra,
+            )
 
-    click.echo("Scanning Claude Code tasks...")
-    ct = ClaudeCodeTaskHandler(
-        tasks_dir=config.claude_tasks_dir,
-        device_id=config.device_id,
-        on_events=collected.extend,
-        state_dir=config.state_dir,
-    )
-    ct_events = ct.scan_existing()
-    click.echo(f"  Found {len(ct_events)} events")
+        click.echo("Scanning Antigravity...")
+        ag_events = AntigravityAdapter(
+            **adapter_args(brain_dir=config.antigravity_brain_dir)
+        ).scan_existing()
+        click.echo(f"  Found {len(ag_events)} events")
 
-    click.echo("Scanning Codex...")
-    cx = CodexAdapter(
-        codex_dir=config.codex_dir,
-        device_id=config.device_id,
-        on_events=collected.extend,
-        state_dir=config.state_dir,
-    )
-    cx_events = cx.poll()
-    click.echo(f"  Found {len(cx_events)} events")
+        click.echo("Scanning Claude Code conversations...")
+        cc_events = ClaudeCodeConversationHandler(
+            **adapter_args(projects_dir=config.claude_projects_dir)
+        ).scan_existing()
+        click.echo(f"  Found {len(cc_events)} events")
 
-    total = len(ag_events) + len(cc_events) + len(ct_events) + len(cx_events)
+        click.echo("Scanning Claude Code tasks...")
+        ct_events = ClaudeCodeTaskHandler(
+            **adapter_args(tasks_dir=config.claude_tasks_dir)
+        ).scan_existing()
+        click.echo(f"  Found {len(ct_events)} events")
+
+        click.echo("Scanning Codex...")
+        cx_events = CodexAdapter(**adapter_args(codex_dir=config.codex_dir)).poll()
+        click.echo(f"  Found {len(cx_events)} events")
+
+    found = ag_events + cc_events + ct_events + cx_events
     click.echo()
-    click.echo(f"Total: {total} events across all tools")
-    click.echo("(Events were enqueued locally — use 'flush' to deliver)")
+    click.echo(f"Total: {len(found)} events across all tools")
+
+    if found:
+        summary = summarise([metrics_from_event(e) for e in found])
+        t = summary["totals"]
+        click.echo()
+        click.echo("Metrics:")
+        click.echo(f"  Sessions:      {t['sessions']}")
+        click.echo(
+            f"  Tokens:        {t['total_tokens']:,} "
+            f"({t['input_tokens']:,} in / {t['output_tokens']:,} out)"
+        )
+        click.echo(
+            f"  Cache:         {t['cache_read_tokens']:,} read / "
+            f"{t['cache_creation_tokens']:,} written"
+        )
+        click.echo(f"  Est. cost:     ${t['cost_usd']:.4f}")
+        if summary["by_model"]:
+            click.echo("  Models:")
+            for row in summary["by_model"][:5]:
+                click.echo(
+                    f"    {row['name']:<28} {row['total_tokens']:>12,} tok  "
+                    f"${row['cost_usd']:.4f}"
+                )
+
+    click.echo()
+    if enqueue:
+        queue = DeliveryQueue(db_path=config.queue_db_path)
+        added = queue.enqueue_many(found)
+        click.echo(f"Enqueued {added} new event(s) — use 'flush' to deliver.")
+    else:
+        click.echo(
+            "Dry run: nothing was captured or queued. "
+            "Re-run with --enqueue to capture these events."
+        )
+
+
+@cli.command()
+@click.option("--port", default=8787, show_default=True, help="Port to listen on.")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Address to bind. Loopback by default — captured payloads are private.",
+)
+@click.option("--no-browser", is_flag=True, help="Don't open a browser window.")
+def dashboard(port: int, host: str, no_browser: bool):
+    """Open a local dashboard for browsing the captured data."""
+    from signal_daemon.dashboard import serve
+
+    config = SignalConfig()
+    config.ensure_dirs()
+
+    if not config.queue_db_path.exists():
+        click.echo(
+            "No captured data yet — start the daemon with 'signal-daemon start' "
+            "or run 'signal-daemon scan --enqueue' first.",
+            err=True,
+        )
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        click.echo(
+            f"⚠  Binding to {host} exposes captured conversation data to your "
+            "network.",
+            err=True,
+        )
+
+    click.echo(f"Signal dashboard: http://{host}:{port}/  (Ctrl-C to stop)")
+    try:
+        serve(config, host=host, port=port, open_browser=not no_browser)
+    except OSError as exc:
+        click.echo(f"Could not start dashboard: {exc}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

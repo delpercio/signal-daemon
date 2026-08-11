@@ -7,9 +7,9 @@ the filename (UUID) and the encoded workspace path gives us the project.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -235,7 +235,10 @@ class ClaudeCodeTaskHandler(FileSystemEventHandler):
             logger.debug("Skipping task file %s: %s", path, exc)
             return None
 
-        content_hash = f"{task_key}:{hash(content)}"
+        # sha256, not the builtin hash() — PYTHONHASHSEED randomises str
+        # hashing per process, so a restart would re-emit every task file.
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        content_hash = f"{task_key}:{digest}"
         if content_hash in seen:
             return None
 
