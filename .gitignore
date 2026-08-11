@@ -1,0 +1,25 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local daemon state (never commit — contains API keys and captured events)
+.env
+*.db
+signal-daemon.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
